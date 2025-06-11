@@ -77,6 +77,17 @@ const invoiceSchema = new mongoose.Schema({
     trim: true,
     default: null
   },
+  // Car Number field
+  carNumber: {
+    type: String,
+    trim: true,
+    default: null
+  },
+  // Usage Reading field
+  usageReading: {
+    type: Number,
+    default: null
+  },
   // 🔥 NEW: Customer GST field
   customerGST: {
     type: String,
@@ -150,11 +161,12 @@ const invoiceSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Index for performance
+// Indexes for performance
 invoiceSchema.index({ customerName: 1 });
 invoiceSchema.index({ customerPhone: 1 });
 invoiceSchema.index({ invoiceDate: -1 });
 invoiceSchema.index({ carModel: 1 });
+invoiceSchema.index({ carNumber: 1 });
 invoiceSchema.index({ paymentMethod: 1 });
 invoiceSchema.index({ customerGST: 1 }); // 🔥 NEW: Index for customer GST
 
