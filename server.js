@@ -33,7 +33,7 @@ app.use("/api/invoices", invoiceRoutes);
 
 // === Root Route ===
 app.get("/", (req, res) => {
-  res.send("🚀 GM AutoCare API is running");
+  res.send("🚀 GM AutoCare API is running...");
 });
 
 // === 404 Handler ===
