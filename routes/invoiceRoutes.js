@@ -10,12 +10,12 @@ router.get('/next-number', async (req, res) => {
 
     let nextNumber = 1;
     if (lastInvoice && lastInvoice.invoiceNumber) {
-      const numberPart = lastInvoice.invoiceNumber.replace('Gmautocare', '');
+      const numberPart = lastInvoice.invoiceNumber.replace('SVK-', '');
       nextNumber = parseInt(numberPart) + 1;
     }
 
     const paddedNumber = nextNumber.toString().padStart(3, '0');
-    const invoiceNumber = `Gmautocare${paddedNumber}`;
+    const invoiceNumber = `SVK-${paddedNumber}`;
 
     res.json({ invoiceNumber, nextNumber });
   } catch (error) {
@@ -24,28 +24,31 @@ router.get('/next-number', async (req, res) => {
   }
 });
 
-// Create new invoice (with separate service amounts)
+// Create new invoice
 router.post('/create', async (req, res) => {
   try {
     const {
       invoiceNumber,
       customerName,
       customerPhone,
-      carModel,           // Car Model
-      customerGST,        // 🔥 NEW: Customer GST
-      paymentMethod,      // Payment Method
+      carModel,
+      carNumber,
+      usageReading,
+      customerGST,
+      paymentMethod,
       invoiceDate,
       items,
-      services, // Service items
+      services,
       
       // Separate subtotals
       itemsSubtotal,
       servicesSubtotal,
       totalAmount,
       
-      // Tax amounts (only for items, services are tax-free)
+      // Tax amounts for items
       cgstAmount,
       sgstAmount,
+      
       grandTotal
     } = req.body;
 
@@ -58,21 +61,24 @@ router.post('/create', async (req, res) => {
       invoiceNumber,
       customerName,
       customerPhone,
-      carModel,                     // Car Model
-      customerGST,                  // 🔥 NEW: Customer GST
-      paymentMethod,                // Payment Method
+      carModel,
+      carNumber,
+      usageReading,
+      customerGST,
+      paymentMethod,
       invoiceDate: new Date(invoiceDate),
       items,
-      services, // Add services to the database
+      services,
       
       // Separate subtotals
       itemsSubtotal: itemsSubtotal || 0,
       servicesSubtotal: servicesSubtotal || 0,
       totalAmount,
       
-      // Tax amounts (only for items, services are tax-free)
+      // Tax amounts for items
       cgstAmount: cgstAmount || 0,
       sgstAmount: sgstAmount || 0,
+      
       grandTotal,
       createdAt: new Date()
     });
@@ -136,7 +142,7 @@ router.get('/:invoiceNumber', async (req, res) => {
   }
 });
 
-// Search invoices
+// Search invoices (includes car number and usage reading)
 router.get('/search/:query', async (req, res) => {
   try {
     const query = req.params.query;
@@ -145,7 +151,10 @@ router.get('/search/:query', async (req, res) => {
         { invoiceNumber: { $regex: query, $options: 'i' } },
         { customerName: { $regex: query, $options: 'i' } },
         { customerPhone: { $regex: query, $options: 'i' } },
-        { customerGST: { $regex: query, $options: 'i' } }  // 🔥 NEW: Search by GST
+        { customerGST: { $regex: query, $options: 'i' } },
+        { carNumber: { $regex: query, $options: 'i' } },
+        { carModel: { $regex: query, $options: 'i' } },
+        { usageReading: isNaN(query) ? null : Number(query) }
       ]
     }).sort({ createdAt: -1 });
 
@@ -156,42 +165,173 @@ router.get('/search/:query', async (req, res) => {
   }
 });
 
-// New route to get invoice breakdown by type
-router.get('/breakdown/:invoiceNumber', async (req, res) => {
+// Get usage readings history for a specific car
+router.get('/usage/:carNumber', async (req, res) => {
   try {
-    const invoice = await Invoice.findOne({ 
-      invoiceNumber: req.params.invoiceNumber 
+    const carNumber = req.params.carNumber;
+    
+    const invoices = await Invoice.find({ 
+      carNumber: carNumber,
+      usageReading: { $ne: null }
+    })
+    .select('invoiceNumber invoiceDate usageReading customerName carModel')
+    .sort({ invoiceDate: -1 });
+
+    if (!invoices.length) {
+      return res.status(404).json({ error: 'No usage readings found for this car number' });
+    }
+
+    res.json({
+      carNumber,
+      totalReadings: invoices.length,
+      readings: invoices
     });
+  } catch (error) {
+    console.error('Error fetching usage readings:', error);
+    res.status(500).json({ error: 'Failed to fetch usage readings' });
+  }
+});
+
+// Get latest usage reading for a car
+router.get('/usage/:carNumber/latest', async (req, res) => {
+  try {
+    const carNumber = req.params.carNumber;
+    
+    const latestInvoice = await Invoice.findOne({ 
+      carNumber: carNumber,
+      usageReading: { $ne: null }
+    })
+    .select('invoiceNumber invoiceDate usageReading customerName carModel')
+    .sort({ invoiceDate: -1 });
+
+    if (!latestInvoice) {
+      return res.status(404).json({ error: 'No usage readings found for this car number' });
+    }
+
+    res.json({
+      carNumber,
+      invoiceNumber: latestInvoice.invoiceNumber,
+      invoiceDate: latestInvoice.invoiceDate,
+      customerName: latestInvoice.customerName,
+      carModel: latestInvoice.carModel,
+      latestReading: latestInvoice.usageReading
+    });
+  } catch (error) {
+    console.error('Error fetching latest usage reading:', error);
+    res.status(500).json({ error: 'Failed to fetch latest usage reading' });
+  }
+});
+
+// Get all cars with their latest usage readings
+router.get('/cars/usage-summary', async (req, res) => {
+  try {
+    const pipeline = [
+      {
+        $match: {
+          carNumber: { $ne: null, $ne: '' },
+          usageReading: { $ne: null }
+        }
+      },
+      {
+        $sort: { invoiceDate: -1 }
+      },
+      {
+        $group: {
+          _id: '$carNumber',
+          latestInvoice: { $first: '$$ROOT' }
+        }
+      },
+      {
+        $project: {
+          carNumber: '$_id',
+          customerName: '$latestInvoice.customerName',
+          carModel: '$latestInvoice.carModel',
+          invoiceNumber: '$latestInvoice.invoiceNumber',
+          invoiceDate: '$latestInvoice.invoiceDate',
+          latestReading: '$latestInvoice.usageReading'
+        }
+      },
+      {
+        $sort: { invoiceDate: -1 }
+      }
+    ];
+
+    const carsWithReadings = await Invoice.aggregate(pipeline);
+
+    res.json({
+      totalCars: carsWithReadings.length,
+      cars: carsWithReadings
+    });
+  } catch (error) {
+    console.error('Error fetching cars usage summary:', error);
+    res.status(500).json({ error: 'Failed to fetch cars usage summary' });
+  }
+});
+
+// Update invoice by invoiceNumber
+router.put('/update/:invoiceNumber', async (req, res) => {
+  try {
+    const invoice = await Invoice.findOneAndUpdate(
+      { invoiceNumber: req.params.invoiceNumber },
+      req.body,
+      { new: true, runValidators: true }
+    );
 
     if (!invoice) {
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
-    const breakdown = {
-      items: {
-        subtotal: invoice.itemsSubtotal,
-        cgst: invoice.cgstAmount,
-        sgst: invoice.sgstAmount,
-        total: invoice.itemsSubtotal + invoice.cgstAmount + invoice.sgstAmount
-      },
-      services: {
-        subtotal: invoice.servicesSubtotal,
-        cgst: 0, // Services are tax-free
-        sgst: 0, // Services are tax-free
-        total: invoice.servicesSubtotal // No tax on services
-      },
-      overall: {
-        subtotal: invoice.totalAmount,
-        cgst: invoice.cgstAmount,
-        sgst: invoice.sgstAmount,
-        grandTotal: invoice.grandTotal
-      }
-    };
-
-    res.json(breakdown);
+    res.json({ message: 'Invoice updated successfully', invoice });
   } catch (error) {
-    console.error('Error getting invoice breakdown:', error);
-    res.status(500).json({ error: 'Failed to get invoice breakdown' });
+    console.error('Error updating invoice:', error);
+    res.status(500).json({ error: 'Failed to update invoice' });
+  }
+});
+
+// Delete invoice by invoiceNumber
+router.delete('/delete/:invoiceNumber', async (req, res) => {
+  try {
+    const result = await Invoice.findOneAndDelete({ invoiceNumber: req.params.invoiceNumber });
+
+    if (!result) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    res.json({ message: 'Invoice deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting invoice:', error);
+    res.status(500).json({ error: 'Failed to delete invoice' });
+  }
+});
+
+// Update usage reading for an existing invoice
+router.patch('/:invoiceNumber/usage', async (req, res) => {
+  try {
+    const { invoiceNumber } = req.params;
+    const { usageReading } = req.body;
+
+    const invoice = await Invoice.findOneAndUpdate(
+      { invoiceNumber },
+      { usageReading },
+      { new: true, runValidators: true }
+    );
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    res.json({ 
+      message: 'Usage reading updated successfully', 
+      invoice: {
+        invoiceNumber: invoice.invoiceNumber,
+        carNumber: invoice.carNumber,
+        usageReading: invoice.usageReading,
+        updatedAt: invoice.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error updating usage reading:', error);
+    res.status(500).json({ error: 'Failed to update usage reading' });
   }
 });
 
