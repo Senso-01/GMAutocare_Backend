@@ -98,24 +98,25 @@ router.post('/create', async (req, res) => {
   }
 });
 
-// Get all invoices (with pagination)
 router.get('/list', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
+    const limit = req.query.limit === 'all' ? null : parseInt(req.query.limit) || 10;
 
-    const invoices = await Invoice.find()
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    let invoicesQuery = Invoice.find().sort({ createdAt: -1 });
 
+    if (limit) {
+      const skip = (page - 1) * limit;
+      invoicesQuery = invoicesQuery.skip(skip).limit(limit);
+    }
+
+    const invoices = await invoicesQuery;
     const total = await Invoice.countDocuments();
 
     res.json({
       invoices,
-      totalPages: Math.ceil(total / limit),
-      currentPage: page,
+      totalPages: limit ? Math.ceil(total / limit) : 1,
+      currentPage: limit ? page : 1,
       total
     });
   } catch (error) {
@@ -123,6 +124,7 @@ router.get('/list', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch invoices' });
   }
 });
+
 
 // Get invoice by number
 router.get('/:invoiceNumber', async (req, res) => {
