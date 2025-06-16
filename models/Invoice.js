@@ -135,7 +135,8 @@ const invoiceSchema = new mongoose.Schema({
     },
     onlineReference: {
       type: String,
-      required: function() { return this.paymentMethod === 'online' || this.paymentMethod === 'both'; }
+      required: false,
+      default: null
     }
   },
   invoiceDate: {
