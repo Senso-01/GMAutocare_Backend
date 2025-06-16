@@ -24,6 +24,38 @@ router.get('/next-number', async (req, res) => {
   }
 });
 
+// 🔥 HELPER FUNCTION: Process payment details based on payment method
+function processPaymentDetails(paymentMethod, grandTotal, paymentDetails = {}) {
+  const result = {
+    cashAmount: 0,
+    onlineAmount: 0,
+    onlineReference: paymentDetails.onlineReference || null
+  };
+
+  switch (paymentMethod) {
+    case 'cash':
+      result.cashAmount = grandTotal;
+      break;
+    case 'online':
+      result.onlineAmount = grandTotal;
+      break;
+    case 'both':
+      result.cashAmount = paymentDetails.cashAmount || 0;
+      result.onlineAmount = paymentDetails.onlineAmount || 0;
+      
+      // Validate that amounts add up to grand total
+      const totalPayment = result.cashAmount + result.onlineAmount;
+      if (Math.abs(totalPayment - grandTotal) > 0.01) {
+        throw new Error(`Payment amounts (Cash: ${result.cashAmount}, Online: ${result.onlineAmount}) must equal grand total: ${grandTotal}`);
+      }
+      break;
+    default:
+      throw new Error('Invalid payment method');
+  }
+
+  return result;
+}
+
 // Create new invoice
 router.post('/create', async (req, res) => {
   try {
@@ -36,6 +68,7 @@ router.post('/create', async (req, res) => {
       usageReading,
       customerGST,
       paymentMethod,
+      paymentDetails, // 🔥 NEW: Payment details for split payments
       invoiceDate,
       items,
       services,
@@ -57,6 +90,14 @@ router.post('/create', async (req, res) => {
       return res.status(400).json({ error: 'Invoice number already exists' });
     }
 
+    // 🔥 NEW: Process payment details based on payment method
+    let processedPaymentDetails;
+    try {
+      processedPaymentDetails = processPaymentDetails(paymentMethod, grandTotal, paymentDetails);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
     const newInvoice = new Invoice({
       invoiceNumber,
       customerName,
@@ -66,6 +107,7 @@ router.post('/create', async (req, res) => {
       usageReading,
       customerGST,
       paymentMethod,
+      paymentDetails: processedPaymentDetails, // 🔥 NEW: Include processed payment details
       invoiceDate: new Date(invoiceDate),
       items,
       services,
@@ -125,7 +167,6 @@ router.get('/list', async (req, res) => {
   }
 });
 
-
 // Get invoice by number
 router.get('/:invoiceNumber', async (req, res) => {
   try {
@@ -144,7 +185,7 @@ router.get('/:invoiceNumber', async (req, res) => {
   }
 });
 
-// Search invoices (includes car number and usage reading)
+// Search invoices (includes car number, usage reading, and online reference)
 router.get('/search/:query', async (req, res) => {
   try {
     const query = req.params.query;
@@ -156,6 +197,7 @@ router.get('/search/:query', async (req, res) => {
         { customerGST: { $regex: query, $options: 'i' } },
         { carNumber: { $regex: query, $options: 'i' } },
         { carModel: { $regex: query, $options: 'i' } },
+        { 'paymentDetails.onlineReference': { $regex: query, $options: 'i' } }, // 🔥 NEW: Search by online reference
         { usageReading: isNaN(query) ? null : Number(query) }
       ]
     }).sort({ createdAt: -1 });
@@ -164,6 +206,56 @@ router.get('/search/:query', async (req, res) => {
   } catch (error) {
     console.error('Error searching invoices:', error);
     res.status(500).json({ error: 'Failed to search invoices' });
+  }
+});
+
+// 🔥 NEW: Get payment summary by payment method
+router.get('/reports/payment-summary', async (req, res) => {
+  try {
+    const { startDate, endDate } = req.query;
+    
+    let dateFilter = {};
+    if (startDate && endDate) {
+      dateFilter = {
+        invoiceDate: {
+          $gte: new Date(startDate),
+          $lte: new Date(endDate)
+        }
+      };
+    }
+
+    const pipeline = [
+      { $match: dateFilter },
+      {
+        $group: {
+          _id: '$paymentMethod',
+          totalAmount: { $sum: '$grandTotal' },
+          totalCash: { $sum: '$paymentDetails.cashAmount' },
+          totalOnline: { $sum: '$paymentDetails.onlineAmount' },
+          count: { $sum: 1 }
+        }
+      }
+    ];
+
+    const paymentSummary = await Invoice.aggregate(pipeline);
+    
+    // Calculate overall totals
+    const overallTotals = paymentSummary.reduce((acc, curr) => {
+      acc.totalAmount += curr.totalAmount;
+      acc.totalCash += curr.totalCash;
+      acc.totalOnline += curr.totalOnline;
+      acc.count += curr.count;
+      return acc;
+    }, { totalAmount: 0, totalCash: 0, totalOnline: 0, count: 0 });
+
+    res.json({
+      paymentSummary,
+      overallTotals,
+      dateRange: { startDate, endDate }
+    });
+  } catch (error) {
+    console.error('Error fetching payment summary:', error);
+    res.status(500).json({ error: 'Failed to fetch payment summary' });
   }
 });
 
@@ -273,9 +365,28 @@ router.get('/cars/usage-summary', async (req, res) => {
 // Update invoice by invoiceNumber
 router.put('/update/:invoiceNumber', async (req, res) => {
   try {
+    const updateData = { ...req.body };
+    
+    // 🔥 NEW: Process payment details if payment method or amounts are being updated
+    if (updateData.paymentMethod || updateData.paymentDetails) {
+      const existingInvoice = await Invoice.findOne({ invoiceNumber: req.params.invoiceNumber });
+      if (!existingInvoice) {
+        return res.status(404).json({ error: 'Invoice not found' });
+      }
+      
+      const grandTotal = updateData.grandTotal || existingInvoice.grandTotal;
+      const paymentMethod = updateData.paymentMethod || existingInvoice.paymentMethod;
+      
+      try {
+        updateData.paymentDetails = processPaymentDetails(paymentMethod, grandTotal, updateData.paymentDetails);
+      } catch (error) {
+        return res.status(400).json({ error: error.message });
+      }
+    }
+
     const invoice = await Invoice.findOneAndUpdate(
       { invoiceNumber: req.params.invoiceNumber },
-      req.body,
+      updateData,
       { new: true, runValidators: true }
     );
 
@@ -287,6 +398,50 @@ router.put('/update/:invoiceNumber', async (req, res) => {
   } catch (error) {
     console.error('Error updating invoice:', error);
     res.status(500).json({ error: 'Failed to update invoice' });
+  }
+});
+
+// 🔥 NEW: Update payment details for an existing invoice
+router.patch('/:invoiceNumber/payment', async (req, res) => {
+  try {
+    const { invoiceNumber } = req.params;
+    const { paymentMethod, paymentDetails } = req.body;
+
+    const existingInvoice = await Invoice.findOne({ invoiceNumber });
+    if (!existingInvoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    // Process payment details
+    let processedPaymentDetails;
+    try {
+      processedPaymentDetails = processPaymentDetails(paymentMethod, existingInvoice.grandTotal, paymentDetails);
+    } catch (error) {
+      return res.status(400).json({ error: error.message });
+    }
+
+    const invoice = await Invoice.findOneAndUpdate(
+      { invoiceNumber },
+      { 
+        paymentMethod,
+        paymentDetails: processedPaymentDetails
+      },
+      { new: true, runValidators: true }
+    );
+
+    res.json({ 
+      message: 'Payment details updated successfully', 
+      invoice: {
+        invoiceNumber: invoice.invoiceNumber,
+        paymentMethod: invoice.paymentMethod,
+        paymentDetails: invoice.paymentDetails,
+        grandTotal: invoice.grandTotal,
+        updatedAt: invoice.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error updating payment details:', error);
+    res.status(500).json({ error: 'Failed to update payment details' });
   }
 });
 
