@@ -49,4 +49,27 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+
+// Update tire route (remove stock validation)
+router.post('/update-stock', async (req, res) => {
+  try {
+    const { tireId, quantity } = req.body;
+    
+    const tire = await Tire.findById(tireId);
+    if (!tire) {
+      return res.status(404).json({ message: 'Tire not found' });
+    }
+
+    // Only reduce stock if it's positive
+    if (tire.stock > 0) {
+      tire.stock = Math.max(0, tire.stock - quantity);
+    }
+    await tire.save();
+    
+    res.json(tire);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
