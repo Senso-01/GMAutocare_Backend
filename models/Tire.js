@@ -6,7 +6,11 @@ const tireSchema = new mongoose.Schema({
   lisi: String,
   pattern: String,
   billingPrice: Number,
-  stock: Number
+   stock: {
+    type: Number,
+    required: true,
+    default: 0  // Remove min: 0 constraint
+  }
 });
 
 module.exports = mongoose.model("Tire", tireSchema);
