@@ -2,34 +2,77 @@ const express = require("express");
 const router = express.Router();
 const Tire = require("../models/Tire");
 
-// Get tires with pagination
+// Get tires with optional pagination
 router.get("/", async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 50;
-    const skip = (page - 1) * limit;
+    if (req.query.pagination === 'false') {
+      // Return all tires without pagination (for billing)
+      const tires = await Tire.find();
+      res.json(tires);
+    } else {
+      // Return paginated tires (for admin)
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 50;
+      const skip = (page - 1) * limit;
 
-    const tires = await Tire.find().skip(skip).limit(limit);
-    const total = await Tire.countDocuments();
+      const tires = await Tire.find().skip(skip).limit(limit);
+      const total = await Tire.countDocuments();
+      const totalStock = await Tire.aggregate([
+        { $group: { _id: null, totalStock: { $sum: "$stock" } } }
+      ]);
 
-    res.json({
-      tires,
-      total,
-      page,
-      pages: Math.ceil(total / limit)
-    });
+      res.json({
+        tires,
+        total,
+        totalStock: totalStock[0]?.totalStock || 0,
+        page,
+        pages: Math.ceil(total / limit)
+      });
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
-
 // Add a new tire
 router.post("/add", async (req, res) => {
   try {
     const newTire = new Tire(req.body);
     await newTire.save();
     res.status(201).json(newTire);  // return saved tire with _id
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// In tireRoutes.js, add this new route
+router.get("/search", async (req, res) => {
+  try {
+    const searchTerm = req.query.q;
+    if (!searchTerm) {
+      return res.status(400).json({ error: "Search term is required" });
+    }
+
+    // Create a case-insensitive regex for search
+    const searchRegex = new RegExp(searchTerm, 'i');
+    
+    // Search across multiple fields
+    const tires = await Tire.find({
+      $or: [
+        { dimension: searchRegex },
+        { materialCode: searchRegex },
+        { lisi: searchRegex },
+        { pattern: searchRegex }
+      ]
+    });
+
+    // Calculate total stock for the search results
+    const totalStock = tires.reduce((sum, tire) => sum + tire.stock, 0);
+
+    res.json({
+      tires,
+      total: tires.length,
+      totalStock
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
