@@ -25,15 +25,16 @@ mongoose
 const tireRoutes = require("./routes/tireRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const invoiceRoutes = require("./routes/invoiceRoutes");
-
+const expenseRouter = require('./routes/expenseRoute');
 // === Route Middleware ===
 app.use("/api/tires", tireRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/invoices", invoiceRoutes);
+app.use("/api/expenses",expenseRouter);
 
 // === Root Route ===
 app.get("/", (req, res) => {
-  res.send("🚀 GM AutoCare API is running...");
+  res.send("🚀 GM AutoCare API is running");
 });
 
 // === 404 Handler ===
