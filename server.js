@@ -25,11 +25,13 @@ mongoose
 const tireRoutes = require("./routes/tireRoutes");
 const adminRoutes = require("./routes/adminRoutes");
 const invoiceRoutes = require("./routes/invoiceRoutes");
+const expenseRoutes = require("./routes/expenseRoutes");
 
 // === Route Middleware ===
 app.use("/api/tires", tireRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/invoices", invoiceRoutes);
+app.use("/api/expenses", expenseRoutes);
 
 // === Root Route ===
 app.get("/", (req, res) => {
