@@ -492,4 +492,53 @@ router.patch('/:invoiceNumber/usage', async (req, res) => {
   }
 });
 
+// 🔥 NEW: Mark invoice as pending/paid
+router.patch('/:invoiceNumber/pending', async (req, res) => {
+  try {
+    const { invoiceNumber } = req.params;
+    const { pendingAmount, isPending } = req.body;
+
+    const invoice = await Invoice.findOneAndUpdate(
+      { invoiceNumber },
+      { 
+        pendingAmount: pendingAmount || 0,
+        isPending: isPending || false
+      },
+      { new: true }
+    );
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    res.json({
+      message: 'Pending status updated successfully',
+      invoice
+    });
+  } catch (error) {
+    console.error('Error updating pending status:', error);
+    res.status(500).json({ error: 'Failed to update pending status' });
+  }
+});
+
+// 🔥 NEW: Get invoices with pending amounts
+router.get('/pending/list', async (req, res) => {
+  try {
+    const pendingInvoices = await Invoice.find({ 
+      isPending: true,
+      pendingAmount: { $gt: 0 }
+    }).sort({ invoiceDate: -1 });
+
+    res.json({
+      count: pendingInvoices.length,
+      totalPendingAmount: pendingInvoices.reduce((sum, inv) => sum + inv.pendingAmount, 0),
+      invoices: pendingInvoices
+    });
+  } catch (error) {
+    console.error('Error fetching pending invoices:', error);
+    res.status(500).json({ error: 'Failed to fetch pending invoices' });
+  }
+});
+
+
 module.exports = router;
