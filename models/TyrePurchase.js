@@ -20,6 +20,10 @@ const tyrePurchaseSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+     brand: {  // Add this field
+        type: String,
+        required: true
+    },
     quantity: {
         type: Number,
         required: true,
