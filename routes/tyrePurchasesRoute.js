@@ -8,14 +8,17 @@ const Invoice = require('../models/Invoice');
 // Create a new tyre purchase
 router.post('/', async (req, res) => {
     try {
-        const { tyreSize, pattern, quantity } = req.body;
+        const { tyreSize, pattern, quantity, brand } = req.body;
 
         // Create the purchase record
-        const newPurchase = new TyrePurchase(req.body);
+        const newPurchase = new TyrePurchase({
+            ...req.body,
+            brand: brand || '' // Ensure brand is included
+        });
         const savedPurchase = await newPurchase.save();
 
-        // Update tire stock
-        await updateTireStock(tyreSize, pattern, quantity);
+        // Update tire stock with brand
+        await updateTireStock(tyreSize, pattern, quantity, brand);
 
         res.status(201).json(savedPurchase);
     } catch (error) {
@@ -24,7 +27,7 @@ router.post('/', async (req, res) => {
 });
 
 // Helper function to update tire stock
-async function updateTireStock(tyreSize, pattern, quantity) {
+async function updateTireStock(tyreSize, pattern, quantity, brand = '') {
     const existingTire = await Tire.findOne({
         dimension: tyreSize,
         pattern: pattern
@@ -32,15 +35,19 @@ async function updateTireStock(tyreSize, pattern, quantity) {
 
     if (existingTire) {
         existingTire.stock += parseInt(quantity);
+        // Update brand if provided and not empty
+        if (brand && brand.trim() !== '') {
+            existingTire.materialCode = brand;
+        }
         await existingTire.save();
     } else {
         const newTire = new Tire({
             dimension: tyreSize,
             pattern: pattern,
-            stock: quantity,
-            materialCode: '',
+            materialCode: brand || '', // Set brand if provided
             lisi: '',
-            billingPrice: 0,
+            stock: quantity,
+            billingPrice: 0,    // Default prices
             ourPrice: 0,
             customerPrice: 0
         });
@@ -274,5 +281,73 @@ async function getSoldQuantity(dimension, pattern, month) {
     ]);
     return result.length > 0 ? result[0].totalSold : 0;
 }
+
+
+// Get purchase by ID
+router.get('/:id', async (req, res) => {
+    try {
+        const purchase = await TyrePurchase.findById(req.params.id);
+        if (!purchase) {
+            return res.status(404).json({ error: 'Purchase not found' });
+        }
+        res.json(purchase);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Update a purchase
+router.put('/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { tyreSize, pattern, quantity, originalQuantity, brand } = req.body;
+
+        // Find the existing purchase
+        const existingPurchase = await TyrePurchase.findById(id);
+        if (!existingPurchase) {
+            return res.status(404).json({ error: 'Purchase not found' });
+        }
+
+        // Calculate the difference in quantity
+        const quantityDifference = quantity - originalQuantity;
+
+        // Update the purchase
+        const updatedPurchase = await TyrePurchase.findByIdAndUpdate(
+            id,
+            { ...req.body, brand }, // Ensure brand is included
+            { new: true }
+        );
+
+        // Update tire stock with the difference and brand
+        if (quantityDifference !== 0 || brand) {
+            await updateTireStock(tyreSize, pattern, quantityDifference, brand);
+        }
+
+        res.json(updatedPurchase);
+    } catch (error) {
+        res.status(400).json({ error: error.message });
+    }
+});
+// Delete a purchase
+router.delete('/:id', async (req, res) => {
+    try {
+        const purchase = await TyrePurchase.findById(req.params.id);
+        if (!purchase) {
+            return res.status(404).json({ error: 'Purchase not found' });
+        }
+
+        // Remove the purchase and update stock
+        await TyrePurchase.findByIdAndDelete(req.params.id);
+        await updateTireStock(
+            purchase.tyreSize, 
+            purchase.pattern, 
+            -purchase.quantity
+        );
+
+        res.json({ message: 'Purchase deleted successfully' });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
 
 module.exports = router;
