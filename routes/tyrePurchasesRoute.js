@@ -110,7 +110,7 @@ router.get('/recent', async (req, res) => {
     }
 });
 
-// Updated stock-levels route in tyrePurchasesRoute.js
+// In tyrePurchasesRoute.js - Update the stock-levels route to calculate totals across all items
 router.get('/stock-levels', async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
@@ -119,14 +119,14 @@ router.get('/stock-levels', async (req, res) => {
         const month = req.query.month;
         const search = req.query.search || '';
 
-        // First get all tires that have been sold (regardless of current stock)
-        let soldItemsMatch = {};
+        // Build date filter for monthly sales
+        let dateFilter = {};
         if (month) {
             const year = new Date().getFullYear();
             const startDate = new Date(year, month - 1, 1);
             const endDate = new Date(year, month, 1);
             
-            soldItemsMatch = {
+            dateFilter = {
                 invoiceDate: {
                     $gte: startDate,
                     $lt: endDate
@@ -134,113 +134,124 @@ router.get('/stock-levels', async (req, res) => {
             };
         }
 
-        const [soldItems, allTimeSoldItems] = await Promise.all([
+        // Get all sold items from invoices
+        const [monthlySales, allTimeSales] = await Promise.all([
+            // Monthly sales
             Invoice.aggregate([
-                { $match: soldItemsMatch },
+                { $match: dateFilter },
                 { $unwind: '$items' },
                 { 
                     $group: { 
                         _id: {
                             dimension: '$items.dimension',
-                            pattern: '$items.pattern'
+                            pattern: '$items.pattern',
+                            brand: '$items.brand'
                         },
-                        monthlySold: { $sum: '$items.quantity' }
+                        quantity: { $sum: '$items.quantity' }
                     }
                 },
-                { $match: { monthlySold: { $gt: 0 } } }
+                { $match: { quantity: { $gt: 0 } } }
             ]),
+            // All-time sales
             Invoice.aggregate([
                 { $unwind: '$items' },
                 { 
                     $group: { 
                         _id: {
                             dimension: '$items.dimension',
-                            pattern: '$items.pattern'
+                            pattern: '$items.pattern',
+                            brand: '$items.brand'
                         },
-                        allTimeSold: { $sum: '$items.quantity' }
+                        quantity: { $sum: '$items.quantity' }
                     }
                 },
-                { $match: { allTimeSold: { $gt: 0 } }}
+                { $match: { quantity: { $gt: 0 } } }
             ])
         ]);
 
-        // Build base query to get these tires' current stock
-        let baseQuery = {};
-        if (allTimeSoldItems.length > 0) {
-            const dimensionPatternPairs = allTimeSoldItems.map(item => ({
-                dimension: item._id.dimension,
-                pattern: item._id.pattern
-            }));
-            baseQuery.$or = dimensionPatternPairs;
-        }
+        // Get tires that are either sold OR in stock
+        let tireQuery = {
+            $or: [
+                { stock: { $gt: 0 } }, // Tires with stock
+                { // Tires that have been sold (we'll match these by dimension/pattern)
+                    $or: allTimeSales.map(sale => ({
+                        dimension: sale._id.dimension,
+                        pattern: sale._id.pattern
+                    }))
+                }
+            ]
+        };
 
-        // Build final query with search filter
-        let finalQuery = {};
-        
+        // Add search filter if provided
         if (search) {
             const searchRegex = new RegExp(search, 'i');
-            const searchCondition = {
-                $or: [
-                    { dimension: searchRegex },
-                    { pattern: searchRegex }
+            tireQuery = {
+                $and: [
+                    tireQuery,
+                    {
+                        $or: [
+                            { dimension: searchRegex },
+                            { pattern: searchRegex },
+                            { materialCode: searchRegex }
+                        ]
+                    }
                 ]
             };
-            
-            if (baseQuery.$or) {
-                // Combine base query with search condition
-                finalQuery = {
-                    $and: [
-                        baseQuery,
-                        searchCondition
-                    ]
-                };
-            } else {
-                // Only search condition if no base query
-                finalQuery = searchCondition;
-            }
-        } else {
-            // Only base query if no search
-            finalQuery = baseQuery;
         }
 
-        // Execute queries only if we have conditions
-        const [tires, total] = await Promise.all([
-            Object.keys(finalQuery).length > 0 ? 
-                Tire.find(finalQuery).skip(skip).limit(limit) : 
-                [],
-            Object.keys(finalQuery).length > 0 ? 
-                Tire.countDocuments(finalQuery) : 
-                0
+        const [relevantTires, totalRelevantTires, allRelevantTires] = await Promise.all([
+            Tire.find(tireQuery).skip(skip).limit(limit),
+            Tire.countDocuments(tireQuery),
+            Tire.find(tireQuery) // Get ALL relevant tires for totals calculation
         ]);
 
-        // Combine with sold data
-        const tiresWithSold = tires.map(tire => {
-            const monthlySoldData = soldItems.find(item => 
-                item._id.dimension === tire.dimension && 
-                item._id.pattern === tire.pattern
-            );
-            
-            const allTimeSoldData = allTimeSoldItems.find(item => 
-                item._id.dimension === tire.dimension && 
-                item._id.pattern === tire.pattern
-            );
+        // Combine data for current page
+        const combinedData = await Promise.all(
+            relevantTires.map(async (tire) => {
+                const monthlySale = monthlySales.find(item => 
+                    item._id.dimension === tire.dimension && 
+                    item._id.pattern === tire.pattern
+                );
+                
+                const allTimeSale = allTimeSales.find(item => 
+                    item._id.dimension === tire.dimension && 
+                    item._id.pattern === tire.pattern
+                );
 
-            return {
-                ...tire.toObject(),
-                monthlySold: monthlySoldData ? monthlySoldData.monthlySold : 0,
-                allTimeSold: allTimeSoldData ? allTimeSoldData.allTimeSold : 0
-            };
-        });
+                return {
+                    dimension: tire.dimension,
+                    pattern: tire.pattern,
+                    brand: tire.materialCode || 'N/A',
+                    stock: tire.stock,
+                    monthlySold: monthlySale ? monthlySale.quantity : 0,
+                    allTimeSold: allTimeSale ? allTimeSale.quantity : 0,
+                    status: allTimeSale ? 'sold' : (tire.stock > 0 ? 'in_stock' : 'out_of_stock')
+                };
+            })
+        );
+
+        // Calculate totals across ALL relevant tires (not just current page)
+        const totalMonthlySold = monthlySales.reduce((sum, item) => sum + item.quantity, 0);
+        const totalAllTimeSold = allTimeSales.reduce((sum, item) => sum + item.quantity, 0);
+        
+        // Calculate stock on hand across ALL relevant tires
+        const totalStockOnHand = allRelevantTires.reduce((sum, tire) => sum + tire.stock, 0);
 
         res.json({
-            data: tiresWithSold,
+            data: combinedData,
             pagination: {
                 page,
                 limit,
-                total,
-                pages: Math.ceil(total / limit),
-                hasNext: page * limit < total,
+                total: totalRelevantTires,
+                pages: Math.ceil(totalRelevantTires / limit),
+                hasNext: page * limit < totalRelevantTires,
                 hasPrev: page > 1
+            },
+            totals: {
+                monthlySold: totalMonthlySold,
+                allTimeSold: totalAllTimeSold,
+                stockOnHand: totalStockOnHand,
+                totalItems: totalRelevantTires
             }
         });
     } catch (error) {
