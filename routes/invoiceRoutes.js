@@ -2,7 +2,6 @@
 const express = require('express');
 const router = express.Router();
 const Invoice = require('../models/Invoice');
-const mongoose = require('mongoose');
 
 // === ADD DEBUG MIDDLEWARE FOR THIS ROUTER ===
 router.use((req, res, next) => {
@@ -15,44 +14,35 @@ router.use((req, res, next) => {
 
 // Get next invoice number
 router.get('/next-number', async (req, res) => {
-  console.log('📢 Next number route hit');
+  console.log('🔢 Next number route hit');
   try {
-    // First, check if we have any invoices at all
-    const invoiceCount = await Invoice.countDocuments();
+    // Get all invoices and sort them properly to find the highest number
+    const allInvoices = await Invoice.find({}).sort({ createdAt: -1 }); // or invoiceDate: -1
     
-    let nextSequence = 1;
+    let highestNumber = 0;
     
-    if (invoiceCount > 0) {
-      // Find the invoice with the highest sequence number
-      const lastInvoice = await Invoice.findOne()
-        .sort({ invoiceNumberSequence: -1 }) // Sort by sequence descending
-        .select('invoiceNumberSequence');
-      
-      console.log('🔍 Last invoice found:', lastInvoice);
-      
-      if (lastInvoice && lastInvoice.invoiceNumberSequence) {
-        nextSequence = lastInvoice.invoiceNumberSequence + 1;
-        console.log('📈 Next sequence will be:', nextSequence);
+    allInvoices.forEach(invoice => {
+      if (invoice.invoiceNumber && invoice.invoiceNumber.startsWith('SVK-')) {
+        const numberPart = invoice.invoiceNumber.replace('SVK-', '');
+        const currentNumber = parseInt(numberPart);
+        if (!isNaN(currentNumber) && currentNumber > highestNumber) {
+          highestNumber = currentNumber;
+        }
       }
-    } else {
-      console.log('📝 No invoices found, starting from 1');
-    }
+    });
 
-    const paddedNumber = nextSequence.toString().padStart(3, '0');
+    const nextNumber = highestNumber + 1;
+    const paddedNumber = nextNumber.toString().padStart(4, '0'); // Changed to 4 digits for 1000+
     const invoiceNumber = `SVK-${paddedNumber}`;
 
-    console.log('🎯 Generated invoice:', invoiceNumber, 'Sequence:', nextSequence);
-
-    res.json({ 
-      invoiceNumber, 
-      invoiceNumberSequence: nextSequence
-    });
+    console.log(`✅ Next invoice number: ${invoiceNumber} (from highest: ${highestNumber})`);
+    
+    res.json({ invoiceNumber, nextNumber });
   } catch (error) {
-    console.error('❌ Error getting next invoice number:', error);
+    console.error('Error getting next invoice number:', error);
     res.status(500).json({ error: 'Failed to get next invoice number' });
   }
 });
-
 // Get regular customers - MOVED TO TOP PRIORITY
 router.get('/regular-customers', async (req, res) => {
   console.log('👥 Regular customers route hit');
@@ -402,7 +392,6 @@ router.post('/create', async (req, res) => {
   try {
     const {
       invoiceNumber,
-      invoiceNumberSequence,
       customerName,
       customerPhone,
       carModel,
@@ -436,7 +425,6 @@ router.post('/create', async (req, res) => {
 
     const newInvoice = new Invoice({
       invoiceNumber,
-       invoiceNumberSequence: invoiceNumberSequence || 1,
       customerName,
       customerPhone,
       carModel,
@@ -458,7 +446,6 @@ router.post('/create', async (req, res) => {
     });
 
     await newInvoice.save();
-      console.log('✅ Invoice created with sequence:', invoiceNumberSequence);
     res.status(201).json({ 
       message: 'Invoice created successfully', 
       invoice: newInvoice 
@@ -696,8 +683,5 @@ router.delete('/delete/:invoiceNumber', async (req, res) => {
     res.status(500).json({ error: 'Failed to delete invoice' });
   }
 });
-
-
-
 
 module.exports = router;
