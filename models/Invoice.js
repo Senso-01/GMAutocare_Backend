@@ -61,6 +61,12 @@ const invoiceSchema = new mongoose.Schema({
     unique: true,
     index: true
   },
+   invoiceNumberSequence: {
+    type: Number, // Add numeric sequence for proper sorting
+    required: true,
+    unique: true,
+    index: true
+  },
   customerName: {
     type: String,
     required: true,
