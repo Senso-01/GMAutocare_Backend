@@ -2,7 +2,7 @@
 const express = require('express');
 const router = express.Router();
 const Invoice = require('../models/Invoice');
-//const mongoose = require('mongoose');
+const mongoose = require('mongoose');
 
 // === ADD DEBUG MIDDLEWARE FOR THIS ROUTER ===
 router.use((req, res, next) => {
