@@ -32,7 +32,7 @@ router.get('/next-number', async (req, res) => {
     });
 
     const nextNumber = highestNumber + 1;
-    const paddedNumber = nextNumber.toString().padStart(5, '0'); // Changed to 4 digits for 1000+
+    const paddedNumber = nextNumber.toString().padStart(4, '0'); // Changed to 4 digits for 1000+
     const invoiceNumber = `SVK-${paddedNumber}`;
 
     console.log(`✅ Next invoice number: ${invoiceNumber} (from highest: ${highestNumber})`);
