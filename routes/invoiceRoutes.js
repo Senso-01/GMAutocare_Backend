@@ -507,8 +507,8 @@ router.put('/update/:invoiceNumber', async (req, res) => {
       updateData.servicesSubtotal = (updateData.services || []).reduce((sum, service) => sum + (service.totalAmount || 0), 0);
       updateData.totalAmount = updateData.itemsSubtotal + updateData.servicesSubtotal;
 
-      updateData.itemsCgstAmount = updateData.itemsSubtotal * 0.14;
-      updateData.itemsSgstAmount = updateData.itemsSubtotal * 0.14;
+      updateData.itemsCgstAmount = updateData.itemsSubtotal * 0.9;
+      updateData.itemsSgstAmount = updateData.itemsSubtotal * 0.9;
       updateData.servicesCgstAmount = updateData.servicesSubtotal * 0.09;
       updateData.servicesSgstAmount = updateData.servicesSubtotal * 0.09;
 
