@@ -11,6 +11,7 @@ router.use((req, res, next) => {
 
 // === SPECIFIC ROUTES FIRST (before parameter routes) ===
 
+
 // Get next invoice number
 router.get('/next-number', async (req, res) => {
   console.log('🔢 Next number route hit');
@@ -42,7 +43,6 @@ router.get('/next-number', async (req, res) => {
     res.status(500).json({ error: 'Failed to get next invoice number' });
   }
 });
-
 // Get regular customers - MOVED TO TOP PRIORITY
 router.get('/regular-customers', async (req, res) => {
   console.log('👥 Regular customers route hit');
@@ -354,7 +354,7 @@ router.get('/:invoiceNumber', async (req, res) => {
 
 // === POST/PUT/PATCH/DELETE ROUTES ===
 
-// 🔥 CORRECTED HELPER FUNCTION: Process payment details based on payment method
+// 🔥 HELPER FUNCTION: Process payment details based on payment method
 function processPaymentDetails(paymentMethod, grandTotal, paymentDetails = {}) {
   const result = {
     cashAmount: 0,
@@ -460,7 +460,7 @@ router.post('/create', async (req, res) => {
   }
 });
 
-// 🔥 CORRECTED: Update invoice by invoiceNumber with FIXED GST CALCULATION
+// Update invoice by invoiceNumber
 router.put('/update/:invoiceNumber', async (req, res) => {
   console.log(`✏️ Update invoice route hit: ${req.params.invoiceNumber}`);
   try {
@@ -486,35 +486,6 @@ router.put('/update/:invoiceNumber', async (req, res) => {
       }
     }
 
-    // 🔥 CORRECTED GST CALCULATION: 9% for both items and services
-    if (updateData.items || updateData.services) {
-      updateData.itemsSubtotal = (updateData.items || []).reduce((sum, item) => sum + (item.totalAmount || 0), 0);
-      updateData.servicesSubtotal = (updateData.services || []).reduce((sum, service) => sum + (service.totalAmount || 0), 0);
-      updateData.totalAmount = updateData.itemsSubtotal + updateData.servicesSubtotal;
-
-      // 🔥 FIXED: 9% GST for both items and services (NOT 90% or other incorrect rates)
-      updateData.itemsCgstAmount = updateData.itemsSubtotal * 0.09;  // 9% CGST for items
-      updateData.itemsSgstAmount = updateData.itemsSubtotal * 0.09;  // 9% SGST for items
-      updateData.servicesCgstAmount = updateData.servicesSubtotal * 0.09;  // 9% CGST for services
-      updateData.servicesSgstAmount = updateData.servicesSubtotal * 0.09;  // 9% SGST for services
-
-      updateData.cgstAmount = updateData.itemsCgstAmount + updateData.servicesCgstAmount;
-      updateData.sgstAmount = updateData.itemsSgstAmount + updateData.servicesSgstAmount;
-      updateData.grandTotal = updateData.totalAmount + updateData.cgstAmount + updateData.sgstAmount;
-
-      console.log('🔢 CORRECTED GST CALCULATION:');
-      console.log(`  Items Subtotal: ${updateData.itemsSubtotal}`);
-      console.log(`  Services Subtotal: ${updateData.servicesSubtotal}`);
-      console.log(`  Total Amount: ${updateData.totalAmount}`);
-      console.log(`  Items CGST (9%): ${updateData.itemsCgstAmount}`);
-      console.log(`  Items SGST (9%): ${updateData.itemsSgstAmount}`);
-      console.log(`  Services CGST (9%): ${updateData.servicesCgstAmount}`);
-      console.log(`  Services SGST (9%): ${updateData.servicesSgstAmount}`);
-      console.log(`  Total CGST: ${updateData.cgstAmount}`);
-      console.log(`  Total SGST: ${updateData.sgstAmount}`);
-      console.log(`  Grand Total: ${updateData.grandTotal}`);
-    }
-
     if (updateData.paymentMethod || updateData.paymentDetails) {
       const existingInvoice = await Invoice.findOne({ invoiceNumber: req.params.invoiceNumber });
       if (!existingInvoice) {
@@ -529,6 +500,21 @@ router.put('/update/:invoiceNumber', async (req, res) => {
       } catch (error) {
         return res.status(400).json({ error: error.message });
       }
+    }
+
+    if (updateData.items || updateData.services) {
+      updateData.itemsSubtotal = (updateData.items || []).reduce((sum, item) => sum + (item.totalAmount || 0), 0);
+      updateData.servicesSubtotal = (updateData.services || []).reduce((sum, service) => sum + (service.totalAmount || 0), 0);
+      updateData.totalAmount = updateData.itemsSubtotal + updateData.servicesSubtotal;
+
+      updateData.itemsCgstAmount = updateData.itemsSubtotal * 0.09;
+      updateData.itemsSgstAmount = updateData.itemsSubtotal * 0.09;
+      updateData.servicesCgstAmount = updateData.servicesSubtotal * 0.09;
+      updateData.servicesSgstAmount = updateData.servicesSubtotal * 0.09;
+
+      updateData.cgstAmount = updateData.itemsCgstAmount + updateData.servicesCgstAmount;
+      updateData.sgstAmount = updateData.itemsSgstAmount + updateData.servicesSgstAmount;
+      updateData.grandTotal = updateData.totalAmount + updateData.cgstAmount + updateData.sgstAmount;
     }
 
     const invoice = await Invoice.findOneAndUpdate(
