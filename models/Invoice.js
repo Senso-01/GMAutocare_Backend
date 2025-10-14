@@ -200,6 +200,29 @@ invoiceSchema.pre('save', function(next) {
   next();
 });
 
+invoiceSchema.pre('save', function(next) {
+    // 🔥 CONSISTENT GST VALIDATION: Ensure 18% GST (9% CGST + 9% SGST)
+    const expectedCGST = this.totalAmount * 0.09;
+    const expectedSGST = this.totalAmount * 0.09;
+    const expectedGrandTotal = this.totalAmount + expectedCGST + expectedSGST;
+    
+    // Allow small rounding differences
+    if (Math.abs(this.grandTotal - expectedGrandTotal) > 0.01) {
+        console.warn(`GST calculation mismatch: Expected ${expectedGrandTotal}, Got ${this.grandTotal}`);
+    }
+    
+    // Ensure GST amounts are consistent
+    if (Math.abs(this.cgstAmount - expectedCGST) > 0.01) {
+        this.cgstAmount = parseFloat(expectedCGST.toFixed(2));
+    }
+    
+    if (Math.abs(this.sgstAmount - expectedSGST) > 0.01) {
+        this.sgstAmount = parseFloat(expectedSGST.toFixed(2));
+    }
+    
+    next();
+});
+
 invoiceSchema.index({ customerName: 1 });
 invoiceSchema.index({ customerPhone: 1 });
 invoiceSchema.index({ invoiceDate: -1 });
