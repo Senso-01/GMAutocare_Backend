@@ -18,9 +18,9 @@ router.get('/next-number', async (req, res) => {
   try {
     // Get all invoices and sort them properly to find the highest number
     const allInvoices = await Invoice.find({}).sort({ createdAt: -1 }); // or invoiceDate: -1
-    
+
     let highestNumber = 0;
-    
+
     allInvoices.forEach(invoice => {
       if (invoice.invoiceNumber && invoice.invoiceNumber.startsWith('SVK-')) {
         const numberPart = invoice.invoiceNumber.replace('SVK-', '');
@@ -36,7 +36,7 @@ router.get('/next-number', async (req, res) => {
     const invoiceNumber = `SVK-${paddedNumber}`;
 
     console.log(`✅ Next invoice number: ${invoiceNumber} (from highest: ${highestNumber})`);
-    
+
     res.json({ invoiceNumber, nextNumber });
   } catch (error) {
     console.error('Error getting next invoice number:', error);
@@ -49,7 +49,7 @@ router.get('/regular-customers', async (req, res) => {
   try {
     const minInvoices = parseInt(req.query.minInvoices) || 3;
     console.log(`📊 Fetching customers with min ${minInvoices} invoices`);
-    
+
     // Get customers with minimum invoice count and their latest invoices
     const result = await Invoice.aggregate([
       {
@@ -59,11 +59,11 @@ router.get('/regular-customers', async (req, res) => {
           latestInvoice: { $last: '$$ROOT' }
         }
       },
-      { 
-        $match: { 
+      {
+        $match: {
           count: { $gte: minInvoices },
           '_id': { $ne: null } // Exclude null customer names
-        } 
+        }
       },
       { $sort: { count: -1 } }
     ]);
@@ -90,10 +90,10 @@ router.get('/regular-customers', async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error fetching regular customers:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       success: false,
       error: 'Failed to fetch regular customers',
-      details: error.message 
+      details: error.message
     });
   }
 });
@@ -132,7 +132,7 @@ router.get('/reports/payment-summary', async (req, res) => {
   console.log('📊 Payment summary route hit');
   try {
     const { startDate, endDate } = req.query;
-    
+
     let dateFilter = {};
     if (startDate && endDate) {
       dateFilter = {
@@ -157,7 +157,7 @@ router.get('/reports/payment-summary', async (req, res) => {
     ];
 
     const paymentSummary = await Invoice.aggregate(pipeline);
-    
+
     // Calculate overall totals
     const overallTotals = paymentSummary.reduce((acc, curr) => {
       acc.totalAmount += curr.totalAmount;
@@ -182,7 +182,7 @@ router.get('/reports/payment-summary', async (req, res) => {
 router.get('/pending/list', async (req, res) => {
   console.log('⏳ Pending list route hit');
   try {
-    const pendingInvoices = await Invoice.find({ 
+    const pendingInvoices = await Invoice.find({
       isPending: true,
       pendingAmount: { $gt: 0 }
     }).sort({ invoiceDate: -1 });
@@ -277,13 +277,13 @@ router.get('/usage/:carNumber', async (req, res) => {
   console.log(`🚗 Usage route hit for car: ${req.params.carNumber}`);
   try {
     const carNumber = req.params.carNumber;
-    
-    const invoices = await Invoice.find({ 
+
+    const invoices = await Invoice.find({
       carNumber: carNumber,
       usageReading: { $ne: null }
     })
-    .select('invoiceNumber invoiceDate usageReading customerName carModel')
-    .sort({ invoiceDate: -1 });
+      .select('invoiceNumber invoiceDate usageReading customerName carModel')
+      .sort({ invoiceDate: -1 });
 
     if (!invoices.length) {
       return res.status(404).json({ error: 'No usage readings found for this car number' });
@@ -305,13 +305,13 @@ router.get('/usage/:carNumber/latest', async (req, res) => {
   console.log(`🚗 Latest usage route hit for car: ${req.params.carNumber}`);
   try {
     const carNumber = req.params.carNumber;
-    
-    const latestInvoice = await Invoice.findOne({ 
+
+    const latestInvoice = await Invoice.findOne({
       carNumber: carNumber,
       usageReading: { $ne: null }
     })
-    .select('invoiceNumber invoiceDate usageReading customerName carModel')
-    .sort({ invoiceDate: -1 });
+      .select('invoiceNumber invoiceDate usageReading customerName carModel')
+      .sort({ invoiceDate: -1 });
 
     if (!latestInvoice) {
       return res.status(404).json({ error: 'No usage readings found for this car number' });
@@ -337,8 +337,8 @@ router.get('/usage/:carNumber/latest', async (req, res) => {
 router.get('/:invoiceNumber', async (req, res) => {
   console.log(`📄 Individual invoice route hit: ${req.params.invoiceNumber}`);
   try {
-    const invoice = await Invoice.findOne({ 
-      invoiceNumber: req.params.invoiceNumber 
+    const invoice = await Invoice.findOne({
+      invoiceNumber: req.params.invoiceNumber
     });
 
     if (!invoice) {
@@ -364,19 +364,21 @@ function processPaymentDetails(paymentMethod, grandTotal, paymentDetails = {}) {
 
   switch (paymentMethod) {
     case 'cash':
-      result.cashAmount = grandTotal;
+      result.cashAmount = parseFloat(grandTotal.toFixed(2));
       break;
     case 'online':
-      result.onlineAmount = grandTotal;
+      result.onlineAmount = parseFloat(grandTotal.toFixed(2));
       break;
     case 'both':
       result.cashAmount = paymentDetails.cashAmount || 0;
       result.onlineAmount = paymentDetails.onlineAmount || 0;
       
-      // Validate that amounts add up to grand total
-      const totalPayment = result.cashAmount + result.onlineAmount;
-      if (Math.abs(totalPayment - grandTotal) > 0.01) {
-        throw new Error(`Payment amounts (Cash: ${result.cashAmount}, Online: ${result.onlineAmount}) must equal grand total: ${grandTotal}`);
+      // 🔥 FIXED: Better validation with rounding tolerance
+      const totalPayment = parseFloat((result.cashAmount + result.onlineAmount).toFixed(2));
+      const expectedTotal = parseFloat(grandTotal.toFixed(2));
+      
+      if (Math.abs(totalPayment - expectedTotal) > 0.01) {
+        throw new Error(`Payment amounts (Cash: ${result.cashAmount}, Online: ${result.onlineAmount}) must equal grand total: ${expectedTotal}`);
       }
       break;
     default:
@@ -421,6 +423,16 @@ router.post('/create', async (req, res) => {
       processedPaymentDetails = processPaymentDetails(paymentMethod, grandTotal, paymentDetails);
     } catch (error) {
       return res.status(400).json({ error: error.message });
+    }
+
+    // 🔥 ADDED: GST Validation to ensure consistency
+    const expectedCGST = parseFloat((totalAmount * 0.09).toFixed(2));
+    const expectedSGST = parseFloat((totalAmount * 0.09).toFixed(2));
+    const expectedGrandTotal = parseFloat((totalAmount + expectedCGST + expectedSGST).toFixed(2));
+
+    // Check for GST calculation mismatches
+    if (Math.abs(grandTotal - expectedGrandTotal) > 0.01) {
+      console.warn(`⚠️ GST calculation mismatch. Frontend: ${grandTotal}, Expected: ${expectedGrandTotal}`);
     }
 
     const newInvoice = new Invoice({
@@ -507,14 +519,15 @@ router.put('/update/:invoiceNumber', async (req, res) => {
       updateData.servicesSubtotal = (updateData.services || []).reduce((sum, service) => sum + (service.totalAmount || 0), 0);
       updateData.totalAmount = updateData.itemsSubtotal + updateData.servicesSubtotal;
 
-      updateData.itemsCgstAmount = updateData.itemsSubtotal * 0.09;
-      updateData.itemsSgstAmount = updateData.itemsSubtotal * 0.09;
-      updateData.servicesCgstAmount = updateData.servicesSubtotal * 0.09;
-      updateData.servicesSgstAmount = updateData.servicesSubtotal * 0.09;
+      // 🔥 FIXED: Consistent 9% GST calculation for both items and services
+      updateData.itemsCgstAmount = parseFloat((updateData.itemsSubtotal * 0.09).toFixed(2));
+      updateData.itemsSgstAmount = parseFloat((updateData.itemsSubtotal * 0.09).toFixed(2));
+      updateData.servicesCgstAmount = parseFloat((updateData.servicesSubtotal * 0.09).toFixed(2));
+      updateData.servicesSgstAmount = parseFloat((updateData.servicesSubtotal * 0.09).toFixed(2));
 
-      updateData.cgstAmount = updateData.itemsCgstAmount + updateData.servicesCgstAmount;
-      updateData.sgstAmount = updateData.itemsSgstAmount + updateData.servicesSgstAmount;
-      updateData.grandTotal = updateData.totalAmount + updateData.cgstAmount + updateData.sgstAmount;
+      updateData.cgstAmount = parseFloat((updateData.itemsCgstAmount + updateData.servicesCgstAmount).toFixed(2));
+      updateData.sgstAmount = parseFloat((updateData.itemsSgstAmount + updateData.servicesSgstAmount).toFixed(2));
+      updateData.grandTotal = parseFloat((updateData.totalAmount + updateData.cgstAmount + updateData.sgstAmount).toFixed(2));
     }
 
     const invoice = await Invoice.findOneAndUpdate(
@@ -575,6 +588,7 @@ router.patch('/:invoiceNumber/payment', async (req, res) => {
 
     let processedPaymentDetails;
     try {
+      // 🔥 FIXED: Use proper rounding for payment amounts
       processedPaymentDetails = processPaymentDetails(paymentMethod, existingInvoice.grandTotal, paymentDetails);
     } catch (error) {
       return res.status(400).json({ error: error.message });
@@ -622,8 +636,8 @@ router.patch('/:invoiceNumber/usage', async (req, res) => {
       return res.status(404).json({ error: 'Invoice not found' });
     }
 
-    res.json({ 
-      message: 'Usage reading updated successfully', 
+    res.json({
+      message: 'Usage reading updated successfully',
       invoice: {
         invoiceNumber: invoice.invoiceNumber,
         carNumber: invoice.carNumber,
@@ -646,7 +660,7 @@ router.patch('/:invoiceNumber/pending', async (req, res) => {
 
     const invoice = await Invoice.findOneAndUpdate(
       { invoiceNumber },
-      { 
+      {
         pendingAmount: pendingAmount || 0,
         isPending: isPending || false
       },
