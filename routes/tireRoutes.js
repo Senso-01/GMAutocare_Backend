@@ -127,4 +127,63 @@ router.post('/update-stock', async (req, res) => {
   }
 });
 
+// Batch update stock for multiple tires
+router.post('/batch-update-stock', async (req, res) => {
+  try {
+    const { updates } = req.body; // Array of { tireId, quantity }
+    
+    if (!updates || !Array.isArray(updates) || updates.length === 0) {
+      return res.status(400).json({ error: "Updates array is required" });
+    }
+
+    // Update all tires in parallel
+    const updatePromises = updates.map(async (update) => {
+      const { tireId, quantity } = update;
+      
+      const tire = await Tire.findById(tireId);
+      if (!tire) {
+        return { 
+          success: false, 
+          tireId, 
+          error: 'Tire not found' 
+        };
+      }
+
+      // Reduce stock (ensure it doesn't go negative)
+      if (tire.stock > 0) {
+        tire.stock = Math.max(0, tire.stock - quantity);
+      }
+      await tire.save();
+      
+      return { 
+        success: true, 
+        tireId, 
+        newStock: tire.stock 
+      };
+    });
+
+    const results = await Promise.all(updatePromises);
+    
+    // Check if any updates failed
+    const failedUpdates = results.filter(r => !r.success);
+    
+    if (failedUpdates.length > 0) {
+      return res.status(207).json({ // 207 Multi-Status
+        message: `Partially updated: ${results.length - failedUpdates.length} succeeded, ${failedUpdates.length} failed`,
+        results: results
+      });
+    }
+
+    res.json({ 
+      success: true, 
+      message: `Successfully updated ${updates.length} tires`,
+      results: results 
+    });
+    
+  } catch (err) {
+    console.error('Batch stock update error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
